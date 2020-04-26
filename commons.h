@@ -2,11 +2,13 @@
 
 #define PACKET_SIZE 100 /* in bytes */
 #define RETRANSMISSION_TIMEOUT 2 /* seconds */
-#define MAX_RETRIES 3 /* if exceeded, assume channel has been broken */
+#define MAX_RETRIES 10 /* if exceeded, assume channel has been broken */
 
 #define SERVER_PORT 12500
 
 #define PACKET_DROP_RATE 10
+
+#define MAX_PENDING 5
 
 typedef struct packet {
 	size_t payload_size;

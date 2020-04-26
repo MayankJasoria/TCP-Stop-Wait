@@ -12,6 +12,16 @@
 #include "commons.h"
 
 /**
+ * Function to report an error and terminate the program
+ * @param str	The error message
+ */
+void report_error(char* str) {
+	perror(str);
+	printf("Terminating program\n");
+	exit(0);
+}
+
+/**
  * Returns the channel on which the timeout is smallest
  * @param c0_sec	The total seconds left for channel 0 to timeout
  * @param c0_usec	The total micro-seconds left for channel 0 to timeout
@@ -23,10 +33,13 @@
 int min_time_channel(size_t c0_sec, size_t c0_usec, size_t c1_sec, size_t c1_usec) {
 	size_t c0_time = c0_sec * CLOCKS_PER_SEC + c0_usec;
 	size_t c1_time = c1_sec * CLOCKS_PER_SEC + c1_usec;
-	if(c0_time <= c1_time) {
+	if(c0_time < c1_time) {
 		return 0;
+	} else if(c0_time > c1_time) {
+		return 1;
+	} else {
+		return rand()%2; /* since both are same, return any one */
 	}
-	return 1;
 }
 
 /**
@@ -37,8 +50,8 @@ int create_connection() {
 	/* Create a socket */
 	int sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if(sock < 0) {
-		perror("Failed to create socket. Terminating");
-		exit(0);
+		report_error("Failed to create socket");
+		
 	}
 
 	/* Construct server address structure */
@@ -50,13 +63,13 @@ int create_connection() {
 
 	/* Make socket non-blocking */
 	// if(fcntl(sock, F_SETFL, (fcntl(sock, F_GETFL, 0) | O_NONBLOCK)) < 0) {
-	// 	perror("Could not make socket nonblocking");
+	// 	report_error("Could not make socket nonblocking");
 	// }
 
 	/* Establish connection */
 	if(connect(sock, (struct sockaddr*) &serv_addr, sizeof(struct sockaddr)) < 0) {
-		perror("Could not establish connection with server. Terminating");
-		exit(0);
+		report_error("Could not establish connection with server");
+		
 	}
 
 	return sock;
@@ -77,6 +90,7 @@ Packet create_packet(FILE* fptr, int channel_no) {
 	pkt.channel_no = channel_no;
 	pkt.is_last = ((pkt.payload_size < PACKET_SIZE) ? 1 : 0); /* Last pakcet if less than required no. of bytes read */
 	pkt.data_or_ack = 0; /* client always sends only data pakcets */
+	return pkt;
 }
 
 /**
@@ -88,14 +102,14 @@ Packet create_packet(FILE* fptr, int channel_no) {
 void time_left(size_t* sec, size_t* usec, double time_taken) {
 	double remaining_time = *sec + (double) *usec / CLOCKS_PER_SEC;
 	remaining_time -= time_taken;
-	size_t remaining_sec = (size_t) remaining_time;
-	size_t remaining_usec = (size_t) ((remaining_time - (double) remaining_sec) * CLOCKS_PER_SEC);
+	long remaining_sec = (long) remaining_time;
+	long remaining_usec = (long) ((remaining_time - (double) remaining_sec) * CLOCKS_PER_SEC);
 	if(remaining_sec < 0 || remaining_usec < 0) {
 		*sec = 0;
 		*usec = 1; /* force instant timeout at select */
 	} else {
-		*sec = remaining_sec;
-		*usec = remaining_usec;
+		*sec = (size_t) remaining_sec;
+		*usec = (size_t) remaining_usec;
 	}
 }
 
@@ -128,11 +142,11 @@ int main() {
 	max_fd = fds[1] + 1;
 
 	/* opening the file to be read */
-	FILE* fptr = fopen("input.txt", "rb");
+	FILE* fptr = fopen("input.txt", "r");
 	if(fptr == NULL) {
-		perror("The requested file could not be opened. Terminating");
-		exit(0);
+		report_error("The requested file could not be opened");
 	}
+	fseek(fptr, 0, SEEK_SET);
 
 	clock_t start, end;
 
@@ -162,8 +176,7 @@ int main() {
 
 	/* send first packet of each channel */
 	if(send(fds[0], &ch0_pkt, sizeof(Packet), 0) < 0) {
-		perror("Failed to perform send(). Terminating");
-		exit(0);
+		report_error("Failed to perform send()");
 	}
 	pkt0_trans_count++;
 	state_ch0 = 1;
@@ -178,8 +191,7 @@ int main() {
 		ch1_pkt = create_packet(fptr, 1);
 		/* File requires more than 1 packet */
 		if(send(fds[1], &ch1_pkt, sizeof(Packet), 0) < 0) {
-			perror("Failed to perform send(). Terminating");
-			exit(0);
+			report_error("Failed to perform send()");
 		}
 		pkt1_trans_count++;
 		state_ch1 = 1;
@@ -219,7 +231,10 @@ int main() {
 		/* noting time after select call (ignoring time taken for computation for simplicity) */
 		clock_t end = clock();
 
-		double time_taken = (end - start) / CLOCKS_PER_SEC;
+		double time_taken = (end - start) / (double) CLOCKS_PER_SEC;
+
+		int is_ch0_updated = 0;
+		int is_ch1_updated = 0;
 
 		if(num_ready == 0) {
 			/* timeout occurred */
@@ -228,12 +243,13 @@ int main() {
 				if(pkt0_trans_count >= MAX_RETRIES) {
 					/* assume channel broken */
 					fprintf(stderr, "Failed to transmit file due to exceeded max retries. Terminating Program\n");
+					close(fds[0]);
+					close(fds[1]);
 					exit(0);
 				} else {
 					/* retransmit packet */
 					if(send(fds[0], &ch0_pkt, sizeof(Packet), 0) < 0) {
-						perror("Failed to perform send(). Terminating");
-						exit(0);
+						report_error("Failed to perform send()");
 					}
 					pkt0_trans_count++;
 					state_ch0 = 1;
@@ -243,21 +259,22 @@ int main() {
 					/* recompute timers */
 					time_left_0_sec = RETRANSMISSION_TIMEOUT;
 					time_left_0_usec = 0;
-					time_left(&time_left_1_sec, &time_left_1_usec, time_taken);
+					is_ch0_updated = 1;
 				}
 			} else {
 				/* channel 1 timeout */
 				if(pkt1_trans_count >= MAX_RETRIES) {
 					/* assume channel broken */
 					fprintf(stderr, "Failed to transmit file due to exceeded max retries. Terminating Program\n");
+					close(fds[0]);
+					close(fds[1]);
 					exit(0);
 				} else {
 					/* retransmit packet */
 					if(send(fds[1], &ch1_pkt, sizeof(Packet), 0) < 0) {
-						perror("Failed to perform send(). Terminating");
-						exit(0);
+						report_error("Failed to perform send()");
 					}
-					pkt0_trans_count++;
+					pkt1_trans_count++;
 					state_ch1 = 1;
 
 					/* print trace of packet */
@@ -266,16 +283,15 @@ int main() {
 					/* recompute timers */
 					time_left_1_sec = RETRANSMISSION_TIMEOUT;
 					time_left_1_usec = 0;
-					time_left(&time_left_0_sec, &time_left_1_usec, time_taken);
+					is_ch1_updated = 1;
 				}
 			}
 		} else {
 			/* FD_ISSET check to identify which fd has received ack */
 			if(FD_ISSET(fds[0], &read_fds)) {
 				/* receive the ack */
-				if(recv(fds[0], &ch0_pkt, PACKET_SIZE, 0) < 0) {
-					perror("Failed to receive. Terminating");
-					exit(0);
+				if(recv(fds[0], &ch0_pkt, sizeof(Packet), 0) < 0) {
+					report_error("Failed to receive");
 				}
 
 				/* print the acknowledgement trace */
@@ -291,11 +307,18 @@ int main() {
 
 					/* send the new packet */
 					if(send(fds[0], &ch0_pkt, sizeof(Packet), 0) < 0) {
-						perror("Failed to send packet. Terminating");
-						exit(0);
+						report_error("Failed to send packet");
 					}
 					state_ch0 = 1;
 					pkt0_trans_count++;
+
+					/* print the newly transmitted packet */
+					print_packet(&ch0_pkt);
+
+					/* update timer */
+					time_left_0_sec = RETRANSMISSION_TIMEOUT;
+					time_left_0_usec = 0;
+					is_ch0_updated = 1;
 
 					if(ch0_pkt.is_last) {
 						/* last packet, perform cleanup */
@@ -310,9 +333,8 @@ int main() {
 
 			if(FD_ISSET(fds[1], &read_fds)) {
 				/* receive the ack */
-				if(recv(fds[1], &ch1_pkt, PACKET_SIZE, 0) < 0) {
-					perror("Failed to receive. Terminating");
-					exit(0);
+				if(recv(fds[1], &ch1_pkt, sizeof(Packet), 0) < 0) {
+					report_error("Failed to receive");
 				}
 
 				/* print the acknowledgement trace */
@@ -328,11 +350,18 @@ int main() {
 
 					/* send the new packet */
 					if(send(fds[1], &ch1_pkt, sizeof(Packet), 0) < 0) {
-						perror("Failed to send packet. Terminating");
-						exit(0);
+						report_error("Failed to send packet");
 					}
 					state_ch1 = 1;
 					pkt1_trans_count++;
+
+					/* print the newly transmitted packet */
+					print_packet(&ch1_pkt);
+
+					/* update timer */
+					time_left_1_sec = RETRANSMISSION_TIMEOUT;
+					time_left_1_usec = 0;
+					is_ch1_updated = 1;
 
 					if(ch1_pkt.is_last) {
 						/* last packet, perform cleanup */
@@ -347,6 +376,15 @@ int main() {
 		}
 
 		/* recompute timers */
+		if(is_ch0_updated == 0) {
+			time_left(&time_left_0_sec, &time_left_0_usec, time_taken);
+		}
+
+		if(is_ch1_updated == 0) {
+			time_left(&time_left_1_sec, &time_left_1_usec, time_taken);
+		}
+
+		// printf("Time remaining\nPacket 0: %ld + %ld * 10^-6\nPacket 1: %ld + %ld * 10^-6\n", time_left_0_sec, time_left_0_usec, time_left_1_sec, time_left_1_usec);
 	}
 
 	close(fds[0]);
