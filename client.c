@@ -202,7 +202,9 @@ int main() {
 		state_ch1 = 2;
 	}
 
-	while(state_ch0 + state_ch1 < 4) {
+	int is_last_ackd = 0;
+
+	while(is_last_ackd == 0) {
 		/* preparing FD_SET for select() */
 		fd_set read_fds;
 		FD_ZERO(&read_fds);
@@ -227,11 +229,6 @@ int main() {
 
 		/* select call */
 		int num_ready = select(max_fd, &read_fds, NULL, NULL, &timeout);
-
-		/* noting time after select call (ignoring time taken for computation for simplicity) */
-		clock_t end = clock();
-
-		double time_taken = (end - start) / (double) CLOCKS_PER_SEC;
 
 		int is_ch0_updated = 0;
 		int is_ch1_updated = 0;
@@ -296,8 +293,9 @@ int main() {
 
 				/* print the acknowledgement trace */
 				print_packet(&ch0_pkt);
-
-				if(state_ch0 != 2 && state_ch1 != 2) {
+				if(ch0_pkt.is_last) {
+					is_last_ackd = 1;
+				} else if(state_ch0 != 2 && state_ch1 != 2) {
 					/* last packet not yet sent */
 					state_ch0 = 0;
 					pkt0_trans_count = 0;
@@ -326,6 +324,9 @@ int main() {
 						fclose(fptr);
 					}
 				} else {
+					if(ch0_pkt.is_last) {
+						is_last_ackd = 1;
+					}
 					time_left_0_sec = __LONG_LONG_MAX__;
 					state_ch0 = 2;
 				}
@@ -340,7 +341,9 @@ int main() {
 				/* print the acknowledgement trace */
 				print_packet(&ch1_pkt);
 
-				if(state_ch0 != 2 && state_ch1 != 2) {
+				if(ch0_pkt.is_last) {
+					is_last_ackd = 1;
+				} else if(state_ch0 != 2 && state_ch1 != 2) {
 					/* last packet not yet sent */
 					state_ch1 = 0;
 					pkt1_trans_count = 0;
@@ -371,9 +374,17 @@ int main() {
 				} else {
 					time_left_1_sec = __LONG_LONG_MAX__;
 					state_ch1 = 2;
+					if(ch1_pkt.is_last) {
+						is_last_ackd = 1;
+					}
 				}
 			}
 		}
+		
+		/* noting time after select call (ignoring time taken for computation for simplicity) */
+		clock_t end = clock();
+
+		double time_taken = (end - start) / (double) CLOCKS_PER_SEC;
 
 		/* recompute timers */
 		if(is_ch0_updated == 0) {
@@ -383,8 +394,6 @@ int main() {
 		if(is_ch1_updated == 0) {
 			time_left(&time_left_1_sec, &time_left_1_usec, time_taken);
 		}
-
-		// printf("Time remaining\nPacket 0: %ld + %ld * 10^-6\nPacket 1: %ld + %ld * 10^-6\n", time_left_0_sec, time_left_0_usec, time_left_1_sec, time_left_1_usec);
 	}
 
 	close(fds[0]);

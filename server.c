@@ -159,11 +159,13 @@ int main() {
 	Packet buffer[TMP_BUFFER_SIZE];
 	int expected_seq = 0;
 	int buf_filled = 0;
-	int last_pkt = 0;
 
 	FILE* fptr = fopen("output.txt", "w");
 
-	while(last_pkt < 1 || buf_filled > 0) {
+	int is_last_ackd = 0;
+	int last_seq = __INT_MAX__;
+
+	while(is_last_ackd == 0) {
 		fd_set read_fds;
 		FD_ZERO(&read_fds);
 		FD_SET(fds[0], &read_fds);
@@ -194,13 +196,20 @@ int main() {
 
 					/* send acknowledgement */
 					Packet ack = create_packet(pkt.seq_no, pkt.channel_no);
-					if(send(fds[0], &ack, sizeof(Packet), 0) < 0) {
-						report_error("Failed to send acknowledgement");
-					}
-
+					
 					if(pkt.is_last) {
 						/* last packet received */
-						last_pkt++;
+						last_seq = pkt.seq_no;
+					}
+
+					if(expected_seq >= last_seq) {
+						/* all packets have been received by server */
+						ack.is_last = 1;
+						is_last_ackd = 1;
+					}
+
+					if(send(fds[0], &ack, sizeof(Packet), 0) < 0) {
+						report_error("Failed to send acknowledgement");
 					}
 
 					/* print trace of sent acknowledgement */
@@ -219,13 +228,15 @@ int main() {
 					/* print trace of received packet */
 					print_packet(&pkt);
 
-					if(pkt.is_last) {
-						/* last packet received */
-						last_pkt++;
-					}
-
 					/* send acknowledgement */
 					Packet ack = create_packet(pkt.seq_no, pkt.channel_no);
+
+					if(pkt.is_last) {
+						/* last packet received */
+						ack.is_last = 1;
+						is_last_ackd = 1;
+					}
+
 					if(send(fds[0], &ack, sizeof(Packet), 0) < 0) {
 						report_error("Failed to send acknowledgement");
 					}
@@ -257,13 +268,20 @@ int main() {
 					/* print trace of received packet */
 					print_packet(&pkt);
 
-					if(pkt.is_last) {
-						/* last packet received */
-						last_pkt++;
-					}
-
 					/* send acknowledgement */
 					Packet ack = create_packet(pkt.seq_no, pkt.channel_no);
+
+					if(pkt.is_last) {
+						/* last packet received */
+						last_seq = pkt.seq_no;
+					}
+
+					if(expected_seq >= last_seq) {
+						/* all packets have been received by server */
+						ack.is_last = 1;
+						is_last_ackd = 1;
+					}
+
 					if(send(fds[1], &ack, sizeof(Packet), 0) < 0) {
 						report_error("Failed to send acknowledgement");
 					}
@@ -284,13 +302,15 @@ int main() {
 					/* print trace of received packet */
 					print_packet(&pkt);
 
-					if(pkt.is_last) {
-						/* last packet received */
-						last_pkt++;
-					}
-
 					/* send acknowledgement */
 					Packet ack = create_packet(pkt.seq_no, pkt.channel_no);
+
+					if(pkt.is_last) {
+						/* last packet received */
+						ack.is_last = 1;
+						is_last_ackd = 1;
+					}
+
 					if(send(fds[1], &ack, sizeof(Packet), 0) < 0) {
 						report_error("Failed to send acknowledgement");
 					}
